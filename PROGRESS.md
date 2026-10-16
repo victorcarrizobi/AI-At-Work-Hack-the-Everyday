@@ -171,10 +171,22 @@ GRANT EXECUTE DATA METRIC FUNCTION ON ACCOUNT TO ROLE ATTENDEE_ROLE;
 - **Status:** DONE
 - **Session:** CoCo Session 4 (2026-10-16)
 - **What:** Fixed invisible filter labels in light theme. Added CSS overrides for white input backgrounds, dark text, light borders on all widgets. App now 832 lines.
+### Step 19: Demo Video Production
+- **Status:** DONE
+- **Session:** CoCo Session 5 (2026-10-16)
+- **What:** Created 9-slide PowerPoint (dark theme). Generated voice narration with edge-tts (Andrew Multilingual). Composed 5:31 MP4 video at 1920x1080. Uploaded to YouTube.
 
----
+### Step 20: YouTube Thumbnail + Description
+- **Status:** DONE
+- **Session:** CoCo Session 5 (2026-10-16)
+- **What:** Generated 1280x720 thumbnail using PIL (KPI boxes, feature badges, pipeline diagram). Wrote YouTube description (no angled brackets).
 
-## What Remains
+### Step 21: Final Screenshots (15)
+- **Status:** DONE
+- **Session:** CoCo Session 5 (2026-10-16)
+- **What:** Captured 15 screenshots: all 5 app tabs (dark + light), Snowflake catalog/monitoring pages, graphify knowledge graph, video slides, YouTube thumbnail. Saved to screenshots/ folder.
+
+
 
 - [x] Fix P0: st.experimental_rerun indentation and API compatibility
 - [x] Redeploy streamlit_app.py to Snowflake stage
@@ -185,7 +197,9 @@ GRANT EXECUTE DATA METRIC FUNCTION ON ACCOUNT TO ROLE ATTENDEE_ROLE;
 - [x] All timestamps converted to ET
 - [x] GOTCHA.md updated to 12 entries
 - [x] QA-DEFECTS.md rev 5 -- all P0s resolved
-- [ ] Record demo video (VIDEO_SCRIPT.md has the plan)
+- [x] Record demo video (5:31 MP4, Andrew voice, 9 slides)
+- [x] YouTube thumbnail + description
+- [x] 15 Devpost screenshots captured
 - [ ] Push final code to GitHub
 - [ ] Devpost deadline: **4:30 PM ET**
 - [x] Honest "How Baked Is It?" self-score: **4 (Usable by others)**
