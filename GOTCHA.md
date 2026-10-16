@@ -88,6 +88,56 @@
 
 ---
 
+## GOTCHA-008: st.bar_chart color= not supported in SiS
+
+- **Session:** CoCo-Session-4 (2026-10-16)
+- **What happened:** `st.bar_chart(df, color="RISK_LEVEL")` threw `TypeError: DataFrameSelectorMixin.bar_chart() got an unexpected keyword argument 'color'`.
+- **Root cause:** Streamlit-in-Snowflake runs an older Streamlit version (~1.22) that doesn't support the `color` parameter on `st.bar_chart`.
+- **Fix:** Replaced all `st.bar_chart` calls with `st.vega_lite_chart` using full Vega-Lite specs with `"background": "transparent"` and theme-aware axis colors.
+- **Rule:** Do not use newer Streamlit API features in SiS. Test against the SiS runtime, not local Streamlit.
+
+---
+
+## GOTCHA-009: st.download_button S3 SignatureDoesNotMatch in SiS
+
+- **Session:** CoCo-Session-4 (2026-10-16)
+- **What happened:** `st.download_button` generates an S3 pre-signed URL. Clicking it returns `SignatureDoesNotMatch`. Happened twice with different approaches.
+- **Root cause:** SiS serves files through a sandboxed S3 proxy that doesn't correctly sign download URLs. Known platform limitation.
+- **Fix:** Replaced with `COPY INTO @stage ... SINGLE = TRUE HEADER = TRUE` + "Show SQL Query" button. Note: `HEADER = TRUE` must be a top-level COPY INTO option, NOT inside `FILE_FORMAT = (...)`.
+- **Rule:** Do not use `st.download_button` in SiS. Use COPY INTO stage for exports.
+
+---
+
+## GOTCHA-010: st.rerun() does NOT exist in SiS -- use st.experimental_rerun()
+
+- **Session:** CoCo-Session-4 (2026-10-16)
+- **What happened:** Replaced `st.experimental_rerun()` with `st.rerun()` based on QA report saying SiS runs Streamlit 1.52.2 (where `st.rerun()` should exist). App crashed with `AttributeError: module 'streamlit' has no attribute 'rerun'`.
+- **Root cause:** Despite the version number, the SiS runtime does NOT have `st.rerun()`. The Snowflake-packaged Streamlit is modified and older APIs are what actually work.
+- **Fix:** Reverted both calls to `st.experimental_rerun()`.
+- **Rule:** In SiS, always use `st.experimental_rerun()`. Do not trust the version number to determine API availability. Test on the live SiS runtime.
+
+---
+
+## GOTCHA-011: Clear Filters session state conflict with widget defaults
+
+- **Session:** CoCo-Session-4 (2026-10-16)
+- **What happened:** After clicking "Clear All Filters", the app crashed with: `The widget with key "det_risk" was created with a default value but also had its value set via the Session State API`.
+- **Root cause:** Widgets had both `default=[]` in the function call AND session state being set programmatically. Streamlit does not allow both.
+- **Fix:** Removed all `default=` parameters from filter widgets. Session state initialization controls initial values instead.
+- **Rule:** Never mix `default=` widget params with `st.session_state[key] = value`. Pick one approach and stick with it.
+
+---
+
+## GOTCHA-012: COPY INTO HEADER = TRUE must be top-level, not inside FILE_FORMAT
+
+- **Session:** CoCo-Session-4 (2026-10-16)
+- **What happened:** `COPY INTO @stage ... FILE_FORMAT = (TYPE = CSV HEADER = TRUE)` threw `SQL compilation error: invalid parameter 'HEADER'`.
+- **Root cause:** `HEADER` is a COPY INTO option, not a FILE_FORMAT sub-option.
+- **Fix:** `FILE_FORMAT = (TYPE = CSV COMPRESSION = NONE FIELD_OPTIONALLY_ENCLOSED_BY = '"')` with `HEADER = TRUE` as a separate top-level option.
+- **Rule:** Keep `HEADER = TRUE` outside `FILE_FORMAT = (...)` in COPY INTO statements.
+
+---
+
 ## Quick Reference: What Works on This Account
 
 | Feature | Status | Notes |

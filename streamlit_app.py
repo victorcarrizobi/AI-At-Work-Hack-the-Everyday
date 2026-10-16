@@ -51,6 +51,12 @@ st.markdown(f"""
     }}
     .kpi-value {{ font-size: 2.2rem; font-weight: 700; margin: 4px 0; }}
     .kpi-label {{ font-size: 0.85rem; color: {MUTED}; text-transform: uppercase; letter-spacing: 1px; }}
+    .kpi-tip {{
+        font-size: 0.7rem; color: {MUTED}; margin-top: 6px; line-height: 1.4;
+        max-height: 0; overflow: hidden; opacity: 0;
+        transition: max-height 0.3s ease, opacity 0.3s ease;
+    }}
+    .kpi-card:hover .kpi-tip {{ max-height: 80px; opacity: 1; }}
     .kpi-critical {{ color: {CRIT_FG}; }}
     .kpi-warning {{ color: {WARN_FG}; }}
     .kpi-healthy {{ color: {HEALTH_FG}; }}
@@ -98,6 +104,29 @@ st.markdown(f"""
         background-color: {TAB_SEL_BG} !important; color: {TAB_SEL_FG} !important; font-weight: 600;
     }}
     .filter-row {{ margin-bottom: 8px; }}
+    /* Widget overrides for light theme */
+    {"" if is_dark else '''
+    .stMultiSelect [data-baseweb="select"],
+    .stMultiSelect [data-baseweb="popover"],
+    .stTextInput input,
+    .stNumberInput input,
+    .stSelectbox [data-baseweb="select"] {
+        background-color: #FFFFFF !important;
+        color: #1E293B !important;
+        border-color: #CBD5E1 !important;
+    }
+    .stMultiSelect [data-baseweb="tag"] {
+        background-color: #E2E8F0 !important;
+        color: #1E293B !important;
+    }
+    .stMultiSelect label, .stTextInput label, .stNumberInput label,
+    .stSelectbox label, .stSlider label {
+        color: #1E293B !important;
+    }
+    [data-baseweb="select"] svg {
+        fill: #475569 !important;
+    }
+    '''}
 </style>
 """, unsafe_allow_html=True)
 
@@ -165,11 +194,13 @@ Recommend a specific action."""
         return f"AI summary unavailable: {str(e)[:100]}. Review this supplier manually based on the metrics above."
 
 
-def render_kpi(label, value, css_class="kpi-info"):
+def render_kpi(label, value, css_class="kpi-info", tooltip=""):
+    tip_html = f'title="{tooltip}"' if tooltip else ""
     st.markdown(f"""
-    <div class="kpi-card">
+    <div class="kpi-card" {tip_html}>
         <div class="kpi-label">{label}</div>
         <div class="kpi-value {css_class}">{value}</div>
+        {"<div class='kpi-tip'>" + tooltip + "</div>" if tooltip else ""}
     </div>
     """, unsafe_allow_html=True)
 
@@ -215,11 +246,20 @@ with hdr_col2:
 
 st.markdown(f'<hr style="border: 1px solid {ACCENT}; margin: 0 0 16px 0;">', unsafe_allow_html=True)
 
-# --- Load Data ---
-scores_df = get_supplier_scores()
-risk_pos_df = get_at_risk_pos()
-po_summary = get_at_risk_po_summary()
-alert_df = get_alert_history()
+# --- Load Data with Error Handling ---
+try:
+    with st.spinner("Loading supplier risk data..."):
+        scores_df = get_supplier_scores()
+        risk_pos_df = get_at_risk_pos()
+        po_summary = get_at_risk_po_summary()
+        alert_df = get_alert_history()
+except Exception as e:
+    st.error(f"Failed to load data from Snowflake. Please refresh the page. Error: {str(e)[:200]}")
+    st.stop()
+
+if scores_df.empty:
+    st.warning("No supplier data found. The SUPPLIER_QUALITY_SCORE dynamic table may still be refreshing. Please try again in a few minutes.")
+    st.stop()
 
 critical_count = int((scores_df["RISK_LEVEL"] == "CRITICAL").sum())
 warning_count = int((scores_df["RISK_LEVEL"] == "WARNING").sum())
@@ -250,15 +290,20 @@ with tab_exec:
     st.markdown('<div class="section-header">KEY RISK INDICATORS</div>', unsafe_allow_html=True)
     c1, c2, c3, c4, c5 = st.columns(5)
     with c1:
-        render_kpi("Critical Suppliers", critical_count, "kpi-critical")
+        render_kpi("Critical Suppliers", critical_count, "kpi-critical",
+                   "Composite risk score >= 58. Score = 30% AI defect classification + 20% defect volume + 20% inverse quality rating + 15% warranty claims + 15% negative sentiment.")
     with c2:
-        render_kpi("Warning Suppliers", warning_count, "kpi-warning")
+        render_kpi("Warning Suppliers", warning_count, "kpi-warning",
+                   "Composite risk score 38-57. Same formula as Critical but below the critical threshold.")
     with c3:
-        render_kpi("Healthy Suppliers", healthy_count, "kpi-healthy")
+        render_kpi("Healthy Suppliers", healthy_count, "kpi-healthy",
+                   "Composite risk score below 38. Low defect count, positive sentiment, and strong quality rating.")
     with c4:
-        render_kpi("At-Risk Exposure", f"${total_exposure/1e9:.1f}B", "kpi-exposure")
+        render_kpi("At-Risk Exposure", f"${total_exposure/1e9:.1f}B", "kpi-exposure",
+                   "Sum of (quantity x unit price) for all open POs (PENDING/CONFIRMED/SHIPPED) from WARNING or CRITICAL suppliers.")
     with c5:
-        render_kpi("Unmanaged Gap", unmanaged, "kpi-critical")
+        render_kpi("Unmanaged Gap", unmanaged, "kpi-critical",
+                   "Suppliers scored WARNING or CRITICAL whose status is still ACTIVE -- not yet moved to PROBATION or SUSPENDED.")
 
     st.markdown("", unsafe_allow_html=True)
     chart_col1, chart_col2 = st.columns(2)
@@ -266,35 +311,114 @@ with tab_exec:
     with chart_col1:
         st.markdown('<div class="section-header">RISK DISTRIBUTION BY TIER</div>', unsafe_allow_html=True)
         tier_risk = scores_df.groupby(["SUPPLIER_TIER", "RISK_LEVEL"]).size().reset_index(name="COUNT")
-        pivot = tier_risk.pivot(index="SUPPLIER_TIER", columns="RISK_LEVEL", values="COUNT").fillna(0)
-        for col in ["CRITICAL", "WARNING", "HEALTHY"]:
-            if col not in pivot.columns:
-                pivot[col] = 0
-        pivot = pivot[["CRITICAL", "WARNING", "HEALTHY"]]
-        st.bar_chart(pivot)
+        st.vega_lite_chart(tier_risk, {
+            "mark": "bar",
+            "encoding": {
+                "x": {"field": "SUPPLIER_TIER", "type": "nominal", "title": "Tier", "axis": {"labelColor": FG, "titleColor": FG}},
+                "y": {"field": "COUNT", "type": "quantitative", "title": "Count", "axis": {"labelColor": FG, "titleColor": FG}},
+                "color": {
+                    "field": "RISK_LEVEL", "type": "nominal", "title": "Risk",
+                    "scale": {"domain": ["CRITICAL", "WARNING", "HEALTHY"], "range": [CRIT_FG, WARN_FG, HEALTH_FG]},
+                    "legend": {"labelColor": FG, "titleColor": FG}
+                }
+            },
+            "config": {"view": {"stroke": "transparent"}, "background": "transparent", "axis": {"gridColor": BORDER_LIGHT}},
+            "width": "container", "height": 280
+        }, use_container_width=True)
 
     with chart_col2:
         st.markdown('<div class="section-header">TOP 10 HIGHEST RISK SUPPLIERS</div>', unsafe_allow_html=True)
-        top10 = scores_df.head(10)[["SUPPLIER_NAME", "COMPOSITE_RISK_SCORE"]].set_index("SUPPLIER_NAME")
-        st.bar_chart(top10)
+        top10 = scores_df.head(10)[["SUPPLIER_NAME", "COMPOSITE_RISK_SCORE", "RISK_LEVEL"]]
+        st.vega_lite_chart(top10, {
+            "mark": "bar",
+            "encoding": {
+                "y": {"field": "SUPPLIER_NAME", "type": "nominal", "title": None,
+                       "sort": {"field": "COMPOSITE_RISK_SCORE", "order": "descending"},
+                       "axis": {"labelColor": FG, "labelLimit": 160}},
+                "x": {"field": "COMPOSITE_RISK_SCORE", "type": "quantitative", "title": "Risk Score",
+                       "axis": {"labelColor": FG, "titleColor": FG}},
+                "color": {"field": "RISK_LEVEL", "type": "nominal",
+                           "scale": {"domain": ["CRITICAL", "WARNING", "HEALTHY"],
+                                     "range": [CRIT_FG, WARN_FG, HEALTH_FG]},
+                           "legend": None}
+            },
+            "config": {"view": {"stroke": "transparent"}, "background": "transparent", "axis": {"gridColor": BORDER_LIGHT}},
+            "width": "container", "height": 300
+        }, use_container_width=True)
 
     st.markdown('<div class="section-header">EXPOSURE SUMMARY</div>', unsafe_allow_html=True)
+
+    # Top-N selector
+    top_col1, top_col2, top_col3 = st.columns([2, 3, 1])
+    with top_col1:
+        top_option = st.selectbox("Show highest risk", ["Top 1", "Top 5", "Top 10", "Top 100", "All"], index=1, key="exec_top_n")
+    with top_col3:
+        detail_clicked = st.button("View in Explorer", key="exec_detail_btn")
+
+    show_all = top_option == "All"
+    top_n = len(scores_df) if show_all else int(top_option.split(" ")[1])
+    top_label = "All" if show_all else top_option
+
+    if detail_clicked:
+        top_names = scores_df.head(top_n)["SUPPLIER_NAME"].tolist() if not show_all else []
+        st.session_state["det_risk"] = [] if show_all else ["CRITICAL", "WARNING"]
+        st.session_state["det_sup_search"] = ""
+        st.session_state["_exec_top_suppliers"] = top_names if not show_all else None
+        st.session_state["_show_nav_banner"] = top_label
+        st.experimental_rerun()
+
+    nav_label = st.session_state.pop("_show_nav_banner", None)
+    if nav_label:
+        st.markdown(f"""
+        <div style="
+            background: linear-gradient(90deg, {ACCENT_BG}, {'#0F2A1A' if is_dark else '#D1FAE5'});
+            border: 2px solid {ACCENT};
+            border-radius: 12px;
+            padding: 16px 24px;
+            margin: 12px 0;
+            text-align: center;
+            animation: pulse-border 1.5s ease-in-out 3;
+        ">
+            <span style="font-size: 1.1rem; font-weight: 700; color: {ACCENT};">
+                Filters applied for {nav_label} suppliers
+            </span>
+            <br>
+            <span style="font-size: 1.4rem; color: {FG};">
+                Click the <b>DATA EXPLORER</b> tab above to view the filtered results
+            </span>
+        </div>
+        <style>
+            @keyframes pulse-border {{
+                0% {{ box-shadow: 0 0 0 0 {'rgba(34,197,94,0.5)' if is_dark else 'rgba(22,163,74,0.4)'}; }}
+                50% {{ box-shadow: 0 0 0 8px {'rgba(34,197,94,0)' if is_dark else 'rgba(22,163,74,0)'}; }}
+                100% {{ box-shadow: 0 0 0 0 {'rgba(34,197,94,0)' if is_dark else 'rgba(22,163,74,0)'}; }}
+            }}
+        </style>
+        """, unsafe_allow_html=True)
+
+    top_suppliers = scores_df.head(top_n) if not show_all else scores_df
+    top_exposure_ids = top_suppliers["SUPPLIER_ID"].tolist()
+    top_po_exposure = risk_pos_df[risk_pos_df["SUPPLIER_ID"].isin(top_exposure_ids)]["DOLLAR_EXPOSURE"].sum() if len(risk_pos_df) > 0 else 0
+    top_po_count = int(risk_pos_df[risk_pos_df["SUPPLIER_ID"].isin(top_exposure_ids)].shape[0]) if len(risk_pos_df) > 0 else 0
+
     exp_col1, exp_col2, exp_col3 = st.columns(3)
     with exp_col1:
-        render_kpi("Critical PO Exposure", f"${critical_exposure/1e9:.1f}B", "kpi-critical")
+        render_kpi(f"{top_label} PO Exposure", f"${top_po_exposure/1e9:.1f}B", "kpi-critical",
+                   f"Dollar exposure from open POs linked to {top_label} highest-risk suppliers.")
     with exp_col2:
-        render_kpi("Total At-Risk POs", f"{total_at_risk_po_count:,}", "kpi-warning")
+        render_kpi(f"{top_label} At-Risk POs", f"{top_po_count:,}", "kpi-warning",
+                   f"Count of open POs from {top_label} highest-risk suppliers.")
     with exp_col3:
-        render_kpi("Avg Risk Score", f"{avg_risk:.1f}", "kpi-info")
+        render_kpi(f"{top_label} Avg Score", f"{top_suppliers['COMPOSITE_RISK_SCORE'].mean():.1f}", "kpi-info",
+                   f"Mean composite risk score of {top_label} suppliers.")
 
-    st.markdown(f"""
-    <div class="ai-card">
-        <div class="ai-card-header">HIGHEST RISK: {top_risk_supplier}</div>
-        Score: {top_risk_score:.1f}/100 | {scores_df.iloc[0]['TOTAL_DEFECTS']} defects |
-        {scores_df.iloc[0]['SAFETY_CRITICAL_DEFECTS']} safety-critical |
-        Sentiment: {scores_df.iloc[0]['AVG_CUSTOMER_SENTIMENT']:.3f}
-    </div>
-    """, unsafe_allow_html=True)
+    top_display = top_suppliers[["SUPPLIER_NAME", "SUPPLIER_TIER", "CURRENT_STATUS", "RISK_LEVEL",
+                                 "COMPOSITE_RISK_SCORE", "TOTAL_DEFECTS", "SAFETY_CRITICAL_DEFECTS",
+                                 "WARRANTY_CLAIMS", "AVG_CUSTOMER_SENTIMENT"]].reset_index(drop=True)
+    st.dataframe(
+        top_display.style.map(color_risk, subset=["RISK_LEVEL"]).map(color_score, subset=["COMPOSITE_RISK_SCORE"]),
+        use_container_width=True, height=min(200 + len(top_display) * 15, 450)
+    )
 
 # =============================================
 # TAB 2: MANAGER DASHBOARD
@@ -390,28 +514,36 @@ with tab_deep:
         d1, d2, d3, d4 = st.columns(4)
         with d1:
             render_kpi("Risk Score", f"{supplier_row['COMPOSITE_RISK_SCORE']:.1f}",
-                       "kpi-critical" if risk_level == "CRITICAL" else "kpi-warning" if risk_level == "WARNING" else "kpi-healthy")
+                       "kpi-critical" if risk_level == "CRITICAL" else "kpi-warning" if risk_level == "WARNING" else "kpi-healthy",
+                       "Weighted composite: 30% AI-classified defect risk + 20% defect volume + 20% inverse quality rating + 15% warranty volume + 15% negative sentiment.")
         with d2:
-            render_kpi("AI Risk Score", f"{supplier_row['AI_RISK_SCORE']:.1f}", "kpi-info")
+            render_kpi("AI Risk Score", f"{supplier_row['AI_RISK_SCORE']:.1f}", "kpi-info",
+                       "Average risk from AI_CLASSIFY on defect text. SAFETY_CRITICAL=100, PERFORMANCE=70, COSMETIC=30, WEAR_AND_TEAR=15.")
         with d3:
             render_kpi("Total Defects", int(supplier_row["TOTAL_DEFECTS"]),
-                       "kpi-critical" if supplier_row["TOTAL_DEFECTS"] > 40 else "kpi-warning")
+                       "kpi-critical" if supplier_row["TOTAL_DEFECTS"] > 40 else "kpi-warning",
+                       "Count of all defect records in AUTO_MFG_DW.QUALITY.DEFECTS linked to this supplier.")
         with d4:
             render_kpi("Warranty Claims", int(supplier_row["WARRANTY_CLAIMS"]),
-                       "kpi-critical" if supplier_row["WARRANTY_CLAIMS"] > 100 else "kpi-info")
+                       "kpi-critical" if supplier_row["WARRANTY_CLAIMS"] > 100 else "kpi-info",
+                       "Count of warranty claims on parts supplied by this supplier, joined via purchase orders.")
 
         st.markdown("", unsafe_allow_html=True)
         d5, d6, d7, d8 = st.columns(4)
         with d5:
-            render_kpi("Safety-Critical", int(supplier_row["SAFETY_CRITICAL_DEFECTS"]), "kpi-critical")
+            render_kpi("Safety-Critical", int(supplier_row["SAFETY_CRITICAL_DEFECTS"]), "kpi-critical",
+                       "Defects where AI_CLASSIFY labeled the description as SAFETY_CRITICAL.")
         with d6:
             sent = supplier_row["AVG_CUSTOMER_SENTIMENT"]
             render_kpi("Avg Sentiment", f"{sent:.3f}",
-                       "kpi-critical" if sent < -0.3 else "kpi-warning" if sent < 0 else "kpi-healthy")
+                       "kpi-critical" if sent < -0.3 else "kpi-warning" if sent < 0 else "kpi-healthy",
+                       "Average SNOWFLAKE.CORTEX.SENTIMENT() score on warranty customer verbatim text. Range -1 (very negative) to +1 (very positive).")
         with d7:
-            render_kpi("On-Time Delivery", f"{supplier_row['ON_TIME_DELIVERY_PCT']:.1f}%", "kpi-info")
+            render_kpi("On-Time Delivery", f"{supplier_row['ON_TIME_DELIVERY_PCT']:.1f}%", "kpi-info",
+                       "Supplier's on-time delivery percentage from the supplier master record.")
         with d8:
-            render_kpi("Quality Rating", f"{supplier_row['BASELINE_QUALITY_RATING']:.1f}", "kpi-info")
+            render_kpi("Quality Rating", f"{supplier_row['BASELINE_QUALITY_RATING']:.1f}", "kpi-info",
+                       "Baseline quality rating from the supplier master record (0-100 scale).")
 
         st.markdown("", unsafe_allow_html=True)
         if st.button("Generate AI Risk Summary", key="deep_ai_btn"):
@@ -446,62 +578,73 @@ with tab_deep:
 with tab_detail:
     st.markdown('<div class="section-header">COMBINED DATA EXPLORER</div>', unsafe_allow_html=True)
 
+    # Check if navigated from Executive with pre-filtered suppliers
+    _exec_suppliers = st.session_state.pop("_exec_top_suppliers", None)
+    if _exec_suppliers:
+        st.success(f"Showing data for top {len(_exec_suppliers)} highest-risk suppliers. Use Clear All Filters to reset.")
+
     hdr1, hdr2 = st.columns([4, 1])
     with hdr1:
         st.caption("Filter across suppliers and purchase orders. Results are exportable as CSV.")
     with hdr2:
         if st.button("Clear All Filters", key="det_clear"):
             for k in ["det_risk", "det_tier", "det_status", "det_cat", "det_po_st",
-                       "det_plant", "det_ship", "det_country", "det_score",
-                       "det_exp_min", "det_sup_search", "det_part_search"]:
-                if k in st.session_state:
-                    if k == "det_score":
-                        st.session_state[k] = (0.0, 100.0)
-                    elif k == "det_exp_min":
-                        st.session_state[k] = 0
-                    elif k in ("det_sup_search", "det_part_search"):
-                        st.session_state[k] = ""
-                    else:
-                        st.session_state[k] = []
+                       "det_plant", "det_ship", "det_country"]:
+                st.session_state[k] = []
+            st.session_state["det_score"] = (0.0, 100.0)
+            st.session_state["det_exp_min"] = 0
+            st.session_state["det_sup_search"] = ""
+            st.session_state["det_part_search"] = ""
             st.experimental_rerun()
 
     detail_df = get_detail_data()
+    if detail_df.empty:
+        st.info("No at-risk purchase order data available. The AT_RISK_PURCHASE_ORDERS dynamic table may still be refreshing.")
+        st.stop()
+
+    # Initialize filter defaults in session state (only on first load)
+    if "det_score" not in st.session_state:
+        st.session_state["det_score"] = (0.0, 100.0)
+    if "det_exp_min" not in st.session_state:
+        st.session_state["det_exp_min"] = 0
 
     # --- Row 1: 5 filters ---
     f1, f2, f3, f4, f5 = st.columns(5)
     with f1:
-        det_risk = st.multiselect("Risk Level", options=sorted(detail_df["RISK_LEVEL"].unique()), default=[], key="det_risk")
+        det_risk = st.multiselect("Risk Level", options=sorted(detail_df["RISK_LEVEL"].unique()), key="det_risk")
     with f2:
-        det_tier = st.multiselect("Supplier Tier", options=sorted(detail_df["SUPPLIER_TIER"].unique()), default=[], key="det_tier")
+        det_tier = st.multiselect("Supplier Tier", options=sorted(detail_df["SUPPLIER_TIER"].unique()), key="det_tier")
     with f3:
-        det_status = st.multiselect("Supplier Status", options=sorted(detail_df["SUPPLIER_STATUS"].unique()), default=[], key="det_status")
+        det_status = st.multiselect("Supplier Status", options=sorted(detail_df["SUPPLIER_STATUS"].unique()), key="det_status")
     with f4:
-        det_category = st.multiselect("Part Category", options=sorted(detail_df["PART_CATEGORY"].unique()), default=[], key="det_cat")
+        det_category = st.multiselect("Part Category", options=sorted(detail_df["PART_CATEGORY"].unique()), key="det_cat")
     with f5:
-        det_po_status = st.multiselect("PO Status", options=sorted(detail_df["PO_STATUS"].unique()), default=[], key="det_po_st")
+        det_po_status = st.multiselect("PO Status", options=sorted(detail_df["PO_STATUS"].unique()), key="det_po_st")
 
     # --- Row 2: 5 more filters ---
     f6, f7, f8, f9, f10 = st.columns(5)
     with f6:
-        det_plant = st.multiselect("Destination Plant", options=sorted(detail_df["DESTINATION_PLANT"].dropna().unique()), default=[], key="det_plant")
+        det_plant = st.multiselect("Destination Plant", options=sorted(detail_df["DESTINATION_PLANT"].dropna().unique()), key="det_plant")
     with f7:
-        det_ship = st.multiselect("Shipping Mode", options=sorted(detail_df["SHIPPING_MODE"].dropna().unique()), default=[], key="det_ship")
+        det_ship = st.multiselect("Shipping Mode", options=sorted(detail_df["SHIPPING_MODE"].dropna().unique()), key="det_ship")
     with f8:
-        det_country = st.multiselect("Country", options=sorted(detail_df["COUNTRY_CODE"].unique()), default=[], key="det_country")
+        det_country = st.multiselect("Country", options=sorted(detail_df["COUNTRY_CODE"].unique()), key="det_country")
     with f9:
         score_range = st.slider("Risk Score Range", 0.0, 100.0, (0.0, 100.0), key="det_score")
     with f10:
-        exposure_min = st.number_input("Min Exposure ($)", min_value=0, value=0, step=100000, key="det_exp_min")
+        exposure_min = st.number_input("Min Exposure ($)", min_value=0, step=100000, key="det_exp_min")
 
     # --- Row 3: text search + part name ---
     f11, f12 = st.columns(2)
     with f11:
-        supplier_search = st.text_input("Search Supplier Name", "", key="det_sup_search")
+        supplier_search = st.text_input("Search Supplier Name", key="det_sup_search")
     with f12:
-        part_search = st.text_input("Search Part Name", "", key="det_part_search")
+        part_search = st.text_input("Search Part Name", key="det_part_search")
 
     # Apply all filters
     df = detail_df.copy()
+    if _exec_suppliers:
+        df = df[df["SUPPLIER_NAME"].isin(_exec_suppliers)]
     if det_risk:
         df = df[df["RISK_LEVEL"].isin(det_risk)]
     if det_tier:
@@ -527,15 +670,18 @@ with tab_detail:
         df = df[df["PART_NAME"].str.contains(part_search, case=False, na=False)]
 
     # Results summary
-    st.markdown(f"""
-    <div style="display: flex; gap: 24px; margin: 8px 0 16px 0; color: {FG};">
-        <span><b>{len(df):,}</b> rows matched</span>
-        <span>|</span>
-        <span><b>{df['SUPPLIER_NAME'].nunique()}</b> suppliers</span>
-        <span>|</span>
-        <span>Exposure: <b>${df['DOLLAR_EXPOSURE'].sum():,.0f}</b></span>
-    </div>
-    """, unsafe_allow_html=True)
+    if df.empty:
+        st.warning("No results match the current filters. Try adjusting or clearing filters.")
+    else:
+        st.markdown(f"""
+        <div style="display: flex; gap: 24px; margin: 8px 0 16px 0; color: {FG};">
+            <span><b>{len(df):,}</b> rows matched</span>
+            <span>|</span>
+            <span><b>{df['SUPPLIER_NAME'].nunique()}</b> suppliers</span>
+            <span>|</span>
+            <span>Exposure: <b>${df['DOLLAR_EXPOSURE'].sum():,.0f}</b></span>
+        </div>
+        """, unsafe_allow_html=True)
 
     # Display table
     st.dataframe(
@@ -544,57 +690,46 @@ with tab_detail:
         height=500
     )
 
-    # Export section
-    exp_col1, exp_col2 = st.columns(2)
-    with exp_col1:
-        csv_data = df.to_csv(index=False)
-        st.download_button(
-            label=f"Download Filtered Data ({len(df):,} rows)",
-            data=csv_data,
-            file_name="supply_chain_risk_export.csv",
-            mime="text/csv",
-            key="det_export"
-        )
-    with exp_col2:
-        if st.button("Show SQL Query", key="det_show_sql"):
-            # Build the equivalent SQL
-            where_clauses = []
-            if det_risk:
-                vals = "', '".join(det_risk)
-                where_clauses.append(f"po.RISK_LEVEL IN ('{vals}')")
-            if det_tier:
-                vals = "', '".join(det_tier)
-                where_clauses.append(f"po.SUPPLIER_TIER IN ('{vals}')")
-            if det_status:
-                vals = "', '".join(det_status)
-                where_clauses.append(f"sq.CURRENT_STATUS IN ('{vals}')")
-            if det_category:
-                vals = "', '".join(det_category)
-                where_clauses.append(f"po.PART_CATEGORY IN ('{vals}')")
-            if det_po_status:
-                vals = "', '".join(det_po_status)
-                where_clauses.append(f"po.PO_STATUS IN ('{vals}')")
-            if det_plant:
-                vals = "', '".join(det_plant)
-                where_clauses.append(f"po.DESTINATION_PLANT IN ('{vals}')")
-            if det_ship:
-                vals = "', '".join(det_ship)
-                where_clauses.append(f"po.SHIPPING_MODE IN ('{vals}')")
-            if det_country:
-                vals = "', '".join(det_country)
-                where_clauses.append(f"sq.COUNTRY_CODE IN ('{vals}')")
-            if score_range != (0.0, 100.0):
-                where_clauses.append(f"sq.COMPOSITE_RISK_SCORE BETWEEN {score_range[0]} AND {score_range[1]}")
-            if exposure_min > 0:
-                where_clauses.append(f"po.DOLLAR_EXPOSURE >= {exposure_min}")
-            if supplier_search:
-                where_clauses.append(f"po.SUPPLIER_NAME ILIKE '%{supplier_search}%'")
-            if part_search:
-                where_clauses.append(f"po.PART_NAME ILIKE '%{part_search}%'")
+    # Export section -- build SQL query for all export methods
+    where_clauses = []
+    if det_risk:
+        vals = "', '".join(det_risk)
+        where_clauses.append(f"po.RISK_LEVEL IN ('{vals}')")
+    if det_tier:
+        vals = "', '".join(det_tier)
+        where_clauses.append(f"po.SUPPLIER_TIER IN ('{vals}')")
+    if det_status:
+        vals = "', '".join(det_status)
+        where_clauses.append(f"sq.CURRENT_STATUS IN ('{vals}')")
+    if det_category:
+        vals = "', '".join(det_category)
+        where_clauses.append(f"po.PART_CATEGORY IN ('{vals}')")
+    if det_po_status:
+        vals = "', '".join(det_po_status)
+        where_clauses.append(f"po.PO_STATUS IN ('{vals}')")
+    if det_plant:
+        vals = "', '".join(det_plant)
+        where_clauses.append(f"po.DESTINATION_PLANT IN ('{vals}')")
+    if det_ship:
+        vals = "', '".join(det_ship)
+        where_clauses.append(f"po.SHIPPING_MODE IN ('{vals}')")
+    if det_country:
+        vals = "', '".join(det_country)
+        where_clauses.append(f"sq.COUNTRY_CODE IN ('{vals}')")
+    if score_range != (0.0, 100.0):
+        where_clauses.append(f"sq.COMPOSITE_RISK_SCORE BETWEEN {score_range[0]} AND {score_range[1]}")
+    if exposure_min > 0:
+        where_clauses.append(f"po.DOLLAR_EXPOSURE >= {exposure_min}")
+    if supplier_search:
+        safe_sup = supplier_search.replace("'", "''")
+        where_clauses.append(f"po.SUPPLIER_NAME ILIKE '%{safe_sup}%'")
+    if part_search:
+        safe_part = part_search.replace("'", "''")
+        where_clauses.append(f"po.PART_NAME ILIKE '%{safe_part}%'")
 
-            where_sql = "\n  AND ".join(where_clauses) if where_clauses else "1=1"
+    where_sql = "\n  AND ".join(where_clauses) if where_clauses else "1=1"
 
-            sql_query = f"""SELECT
+    export_sql = f"""SELECT
     po.PO_NUMBER, po.SUPPLIER_NAME, po.SUPPLIER_TIER,
     sq.CURRENT_STATUS, sq.COUNTRY_CODE, po.RISK_LEVEL,
     sq.COMPOSITE_RISK_SCORE, sq.AI_RISK_SCORE,
@@ -608,9 +743,28 @@ FROM DEFAULT_DATABASE.PUBLIC.AT_RISK_PURCHASE_ORDERS po
 JOIN DEFAULT_DATABASE.PUBLIC.SUPPLIER_QUALITY_SCORE sq
   ON po.SUPPLIER_ID = sq.SUPPLIER_ID
 WHERE {where_sql}
-ORDER BY po.DOLLAR_EXPOSURE DESC;"""
+ORDER BY po.DOLLAR_EXPOSURE DESC"""
 
-            st.code(sql_query, language="sql")
+    exp_col1, exp_col2 = st.columns(2)
+    with exp_col1:
+        if st.button(f"Export to Stage ({len(df):,} rows)", key="det_export"):
+            try:
+                copy_sql = f"""COPY INTO @DEFAULT_DATABASE.PUBLIC.STREAMLIT_STAGE/exports/supply_chain_risk_export.csv
+FROM ({export_sql})
+FILE_FORMAT = (TYPE = CSV COMPRESSION = NONE FIELD_OPTIONALLY_ENCLOSED_BY = '"')
+OVERWRITE = TRUE
+SINGLE = TRUE
+HEADER = TRUE"""
+                session.sql(copy_sql).collect()
+                st.success("Exported successfully.")
+                st.code("-- Download from Snowsight SQL worksheet:\nGET @DEFAULT_DATABASE.PUBLIC.STREAMLIT_STAGE/exports/supply_chain_risk_export.csv file:///tmp/;", language="sql")
+            except Exception as e:
+                st.warning(f"Stage export failed: {str(e)[:150]}")
+                st.info("Copy the SQL query below and run it in a Snowsight SQL worksheet. Use the download button in the results panel.")
+    with exp_col2:
+        if st.button("Show SQL Query", key="det_show_sql"):
+            st.code(export_sql + ";", language="sql")
+            st.caption("Copy this query, paste into a Snowsight SQL worksheet, run it, then click the download icon in the results panel.")
 
 
 # =============================================
@@ -671,6 +825,6 @@ st.markdown(f"""
 <div class="app-footer">
     DATA IN THE D 2026 HACKATHON | HACK THE GRIND TRACK |
     Powered by Snowflake Dynamic Tables, Cortex AI (AI_CLASSIFY, SENTIMENT, AI_COMPLETE), Alerts, Tasks, and DMFs<br>
-    How Baked Is It? Score: 3 (Working Prototype) | Built with CoCo
+    How Baked Is It? Score: 4 (Usable by Others) | Built with CoCo
 </div>
 """, unsafe_allow_html=True)

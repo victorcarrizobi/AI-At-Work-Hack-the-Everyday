@@ -6,9 +6,32 @@
 # Graphify analysis cache (large generated files)
 .graphify_*.json
 .graphify_*.txt
+.graphify_merge.py
 graphify-out/
+
+# Temp build scripts
+.build_pptx.py
+.build_sample_video.py
+.build_voice_samples.py
+.build_voice_v2.py
+.voice_samples.py
+
+# Python cache
+__pycache__/
+
+# Video samples (large generated files)
+video_sample/
+video_build/
+.build_full_video.py
+*TEMP_MPY*
+
+# Word temp lock files
+~$*
 
 # OS files
 Thumbs.db
 Desktop.ini
 .DS_Store
+
+# Zip archives (regenerated)
+*.zip

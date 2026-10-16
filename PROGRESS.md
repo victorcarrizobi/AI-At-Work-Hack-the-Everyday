@@ -103,13 +103,92 @@ GRANT EXECUTE DATA METRIC FUNCTION ON ACCOUNT TO ROLE ATTENDEE_ROLE;
 
 ---
 
+### Step 8: Devpost Submission Content
+- **Status:** DONE
+- **Session:** CoCo Session 2 (2026-10-16)
+- **What:** Wrote elevator pitch, full project story (Markdown with LaTeX, no asterisks per user preference), survey answers (all under 255-char Devpost limits). Tags: Snowflake, Cortex AI, Dynamic Tables, Streamlit, AI_CLASSIFY, SENTIMENT, AI_COMPLETE, Supply Chain, Risk Management, Real-Time.
+- **Submitted to:** Devpost
+
+### Step 9: GitHub Repository
+- **Status:** DONE
+- **Session:** CoCo Session 2 (2026-10-16)
+- **What:** Pushed all project files to GitHub. Created README.md with architecture diagram, feature table, screenshot references, and build methodology. Created .gitignore excluding IDE/tool artifacts.
+- **Repo:** https://github.com/victorcarrizobi/AI-At-Work-Hack-the-Everyday
+- **Files:** 26 files including source, docs, screenshots, PPT slides, hackathon instructions
+
+### Step 10: Full QA Walkthrough
+- **Status:** DONE
+- **Session:** CoCo Session 3 (2026-10-16)
+- **What:** End-to-end QA of all deployed tabs via browser automation. Static code review of all 755 lines. Created QA-DEFECTS.md with prioritized defect list.
+- **Findings:**
+  - Deployed code is stale (4 tabs live vs 5 in local file)
+  - 2x P0 crash bugs: `st.experimental_rerun()` removed in Streamlit 1.37 (lines 331, 536)
+  - Dynamic Tables refreshed: now 33 CRITICAL, 294 WARNING, 73 HEALTHY (was 20/268/112)
+  - Bar charts replaced with Vega-Lite specs (resolved TypeError)
+  - Top-N selector added to Executive Overview
+
+### Step 11: UI Improvements (User-Applied)
+- **Status:** DONE
+- **Session:** CoCo Session 3 (2026-10-16)
+- **What:** User updated streamlit_app.py (696 -> 755 lines):
+  - Replaced `st.bar_chart()` with `st.vega_lite_chart()` for theme-aware charts
+  - Added Top-N selector (Top 1/5/10/100/All) to Executive Overview with dynamic KPIs
+  - Added "View in Explorer" cross-tab navigation button
+  - Added session state initialization for Data Explorer slider
+  - 5th tab (DATA EXPLORER) with 12 filters, CSV export, Show SQL
+
+### Step 12: Export Fix -- COPY INTO HEADER
+- **Status:** DONE
+- **Session:** CoCo Session 4 (2026-10-16)
+- **What:** Fixed COPY INTO export. `HEADER = TRUE` was inside `FILE_FORMAT = (...)` causing SQL compilation error. Moved to top-level COPY INTO option.
+
+### Step 13: App Hardening -- Error Handling & Empty States
+- **Status:** DONE
+- **Session:** CoCo Session 4 (2026-10-16)
+- **What:** Added try/except around all data loads, st.spinner for loading, empty state handling for zero-row results, SQL injection escaping on text search filters.
+
+### Step 14: Fixed st.rerun vs st.experimental_rerun
+- **Status:** DONE
+- **Session:** CoCo Session 4 (2026-10-16)
+- **What:** Discovered SiS does NOT support `st.rerun()` despite version number. Reverted to `st.experimental_rerun()`. Fixed critical indentation bug where `st.experimental_rerun()` was at column 0 (outside if block = infinite loop).
+
+### Step 15: Bake Score Upgraded to 4 (Usable by Others)
+- **Status:** DONE
+- **Session:** CoCo Session 4 (2026-10-16)
+- **What:** Updated bake score from 3 to 4 across all files. Justified with: error handling, empty states, loading spinners, input sanitization, graceful AI fallback. Documented what earns a 4 and what would make a 5.
+
+### Step 16: Documentation Final Pass
+- **Status:** DONE
+- **Session:** CoCo Session 4 (2026-10-16)
+- **What:** Created NOTE4JUDGES.md (292 lines), EXECUTIVE_SUMMARY.docx, TECHNICAL_ARCHITECTURE.docx, VIDEO_SCRIPT.md. Updated all timestamps to ET. Updated GOTCHA.md to 12 entries. Updated QA-DEFECTS.md to rev 5 (all P0s resolved). Final LOG.md and PROGRESS.md updates.
+
+### Step 17: Top 10 Chart Redesign
+- **Status:** DONE
+- **Session:** CoCo Session 4 (2026-10-16)
+- **What:** Replaced vertical bar chart (all bars same height due to clustered scores) with horizontal bar chart. Added zoomed X-axis (domainMin), color-coded bars by risk level, rounded corners, full supplier names on Y-axis.
+
+### Step 18: Light Theme Widget Fix
+- **Status:** DONE
+- **Session:** CoCo Session 4 (2026-10-16)
+- **What:** Fixed invisible filter labels in light theme. Added CSS overrides for white input backgrounds, dark text, light borders on all widgets. App now 832 lines.
+
+---
+
 ## What Remains
 
-- [ ] Take screenshots of the Streamlit app for Devpost
-- [ ] Record a short demo video (optional)
-- [ ] Write the Devpost submission (project name, description, features, screenshots, honest bake score)
+- [x] Fix P0: st.experimental_rerun indentation and API compatibility
+- [x] Redeploy streamlit_app.py to Snowflake stage
+- [x] Error handling, empty states, loading spinner
+- [x] Bake score upgraded to 4
+- [x] NOTE4JUDGES.md, EXECUTIVE_SUMMARY.docx, TECHNICAL_ARCHITECTURE.docx
+- [x] VIDEO_SCRIPT.md for demo recording
+- [x] All timestamps converted to ET
+- [x] GOTCHA.md updated to 12 entries
+- [x] QA-DEFECTS.md rev 5 -- all P0s resolved
+- [ ] Record demo video (VIDEO_SCRIPT.md has the plan)
+- [ ] Push final code to GitHub
 - [ ] Devpost deadline: **4:30 PM ET**
-- [ ] Honest "How Baked Is It?" self-score: **3 (Working prototype)**
+- [x] Honest "How Baked Is It?" self-score: **4 (Usable by others)**
 
 ---
 
